@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2022, Raspberry Pi Ltd.
  *
- * libcamera_prod.cpp - libcamera prod test app.
+ * rpicam_prod.cpp - rpicam prod test app.
  */
 
 #include <fcntl.h>
@@ -13,7 +13,7 @@
 #include <chrono>
 #include <string>
 
-#include "core/libcamera_encoder.hpp"
+#include "core/rpicam_encoder.hpp"
 #include "encoder/null_encoder.hpp"
 #include "output/output.hpp"
 
@@ -169,11 +169,11 @@ struct ProdOptions : public VideoOptions
 	}
 };
 
-class LibcameraProd : public LibcameraApp
+class RPicamProd : public RPiCamApp
 {
 public:
-	LibcameraProd()
-		: LibcameraApp(std::make_unique<ProdOptions>()), focus_pos_(0), focus_min_pos_(0), focus_max_pos_(0),
+	RPicamProd()
+		: RPiCamApp(std::make_unique<ProdOptions>()), focus_pos_(0), focus_min_pos_(0), focus_max_pos_(0),
 		  focus_revdir_(false), focus_cycles_(0), lens_device_(), temp_min_(65536), temp_max_(-1)
 	{
 	}
@@ -201,16 +201,16 @@ public:
 	int temp_min_, temp_max_;
 };
 
-void LibcameraProd::run_calibration(CompletedRequestPtr req)
+void RPicamProd::run_calibration(CompletedRequestPtr req)
 {
 	StreamInfo info;
 	libcamera::Stream *raw = RawStream(&info);
 
-	libcamera::FrameBuffer *buffer = req->buffers[raw];
-	libcamera::Span span = Mmap(buffer)[0];
+	BufferReadSync r(this, req->buffers[raw]);
+	libcamera::Span span = r.Get()[0];
 	void *mem = span.data();
 
-	if (!buffer || !mem)
+	if (!mem)
 		throw std::runtime_error("Invalid RAW buffer");
 
 	auto it = bayer_formats.find(info.pixel_format);
@@ -269,7 +269,7 @@ void LibcameraProd::run_calibration(CompletedRequestPtr req)
 	std::cout << "\r" << s.str() << std::flush;
 }
 
-bool LibcameraProd::run_focus_test(CompletedRequestPtr req, unsigned int count)
+bool RPicamProd::run_focus_test(CompletedRequestPtr req, unsigned int count)
 {
 	ProdOptions const *options = static_cast<ProdOptions *>(GetOptions());
 
@@ -331,17 +331,17 @@ bool LibcameraProd::run_focus_test(CompletedRequestPtr req, unsigned int count)
 	return false;
 }
 
-void LibcameraProd::run_dust_test(CompletedRequestPtr req)
+void RPicamProd::run_dust_test(CompletedRequestPtr req)
 {
 	ProdOptions const *options = static_cast<ProdOptions *>(GetOptions());
 	StreamInfo info;
 	libcamera::Stream *raw = RawStream(&info);
 
-	libcamera::FrameBuffer *buffer = req->buffers[raw];
-	libcamera::Span span = Mmap(buffer)[0];
+	BufferReadSync r(this, req->buffers[raw]);
+	libcamera::Span span = r.Get()[0];
 	void *mem = span.data();
 
-	if (!buffer || !mem)
+	if (!mem)
 		throw std::runtime_error("Invalid RAW buffer");
 
 	auto it = bayer_formats.find(info.pixel_format);
@@ -509,16 +509,17 @@ static unsigned find_centile(uint32_t const *histogram, unsigned start, unsigned
 	return i;
 }
 
-void LibcameraProd::run_quad_test(CompletedRequestPtr req)
+void RPicamProd::run_quad_test(CompletedRequestPtr req)
 {
 	StreamInfo info;
 	libcamera::Stream *raw = RawStream(&info);
 	unsigned black_level = static_cast<ProdOptions *>(GetOptions())->black_level;
-	libcamera::FrameBuffer *buffer = req->buffers[raw];
-	libcamera::Span span = Mmap(buffer)[0];
+
+	BufferReadSync r(this, req->buffers[raw]);
+	libcamera::Span span = r.Get()[0];
 	void *mem = span.data();
 
-	if (!buffer || !mem || info.width < 256 || info.height < 256)
+	if (!mem || info.width < 256 || info.height < 256)
 		throw std::runtime_error("Invalid RAW buffer");
 
 	auto it = bayer_formats.find(info.pixel_format);
@@ -765,7 +766,7 @@ void LibcameraProd::run_quad_test(CompletedRequestPtr req)
 	delete [] rowsums;
 }
 
-void LibcameraProd::record_temp(int t)
+void RPicamProd::record_temp(int t)
 {
 	if (t < temp_min_)
 		temp_min_ = t;
@@ -773,7 +774,7 @@ void LibcameraProd::record_temp(int t)
 		temp_max_ = t;
 }
 
-void LibcameraProd::report_temp()
+void RPicamProd::report_temp()
 {
 	std::cout << "Temperature: min " << temp_min_ << " max " << temp_max_ << " diff " << (temp_max_ - temp_min_)
 			  << std::endl;
@@ -781,14 +782,14 @@ void LibcameraProd::report_temp()
 
 // The main even loop for the application.
 
-static void event_loop(LibcameraProd &app)
+static void event_loop(RPicamProd &app)
 {
 	ProdOptions const *options = static_cast<ProdOptions *>(app.GetOptions());
 	std::unique_ptr<Output> output = std::unique_ptr<Output>(Output::Create((VideoOptions *) options));
 	CompletedRequestPtr req;
 
 	app.OpenCamera();
-	app.ConfigureVideo(LibcameraProd::FLAG_VIDEO_RAW);
+	app.ConfigureVideo(RPiCamApp::FLAG_VIDEO_RAW);
 	app.StartCamera();
 	auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -804,12 +805,12 @@ static void event_loop(LibcameraProd &app)
 
 	for (unsigned int count = 0;; count++)
 	{
-		LibcameraProd::Msg msg = app.Wait();
+		RPicamProd::Msg msg = app.Wait();
 
 		req = std::get<CompletedRequestPtr>(msg.payload);
-		if (msg.type == LibcameraEncoder::MsgType::Quit)
+		if (msg.type == RPiCamApp::MsgType::Quit)
 			break;
-		if (msg.type != LibcameraProd::MsgType::RequestComplete)
+		if (msg.type != RPiCamApp::MsgType::RequestComplete)
 			throw std::runtime_error("unrecognised message!");
 
 		if (count == 0)
@@ -822,7 +823,7 @@ static void event_loop(LibcameraProd &app)
 		LOG(2, "Viewfinder frame " << count);
 		auto now = std::chrono::high_resolution_clock::now();
 		bool timeout = !options->frames && options->timeout &&
-					   (now - start_time > std::chrono::milliseconds(options->timeout));
+					   (now - start_time > options->timeout.value);
 		bool frameout = options->frames && count >= options->frames;
 		if (timeout || frameout)
 			break;
@@ -862,7 +863,7 @@ int main(int argc, char *argv[])
 {
 	try
 	{
-		LibcameraProd app;
+		RPicamProd app;
 		ProdOptions *options = static_cast<ProdOptions *>(app.GetOptions());
 		if (options->Parse(argc, argv))
 		{
@@ -885,7 +886,7 @@ int main(int argc, char *argv[])
 			if (options->focus_test)
 			{
 				options->frames = 0;
-				options->timeout = 0;
+				options->timeout.set("0s");
 
 				if (!options->shutter || !options->gain)
 					throw std::runtime_error("Must set fixed shutter and gain for the focus test!");
