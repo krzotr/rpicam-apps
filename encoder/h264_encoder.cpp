@@ -56,8 +56,12 @@ H264Encoder::H264Encoder(VideoOptions const *options, StreamInfo const &info)
 	{
 		ctrl.id = V4L2_CID_MPEG_VIDEO_BITRATE;
 		ctrl.value = options->bitrate.bps();
+
+		LOG(2, "H264Encoder: Set bitrate (USER)  : " << ctrl.value);
 		if (xioctl(fd_, VIDIOC_S_CTRL, &ctrl) < 0)
 			throw std::runtime_error("failed to set bitrate");
+
+		LOG(2, "H264Encoder: Set bitrate (DEVICE): " << ctrl.value);
 	}
 	if (!options->profile.empty())
 	{
